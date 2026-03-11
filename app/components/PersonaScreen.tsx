@@ -27,6 +27,7 @@ const WORK_TYPES = [
 
 interface PersonaData {
   name: string;
+  age: number;
   years: number;
   jobTitle: string;
   personaType: string;
@@ -40,6 +41,7 @@ export default function PersonaScreen() {
   const [activeTab, setActiveTab] = useState("기본 정보");
   const [persona, setPersona] = useState<PersonaData>({
     name: "김민수",
+    age: 30,
     years: 3,
     jobTitle: "Frontend Developer",
     personaType: "적극형 (Challenger)",
@@ -49,12 +51,64 @@ export default function PersonaScreen() {
     rational: 55,
   });
 
+  // Avatar state
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+
   const tabs = ["기본 정보", "성향 및 스타일", "배경 및 컨텍스트", "행동 규칙"];
 
   const shortName = persona.name.length >= 2 ? persona.name.slice(0, 2) : persona.name;
   const typeLabel = persona.personaType.split(" (")[0];
 
   const traitTags = ["직설적 화법", "빠른 피드백 선호", "논리적"];
+
+  // Check if all basic fields are filled
+  const isBasicInfoComplete = (): boolean => {
+    return (
+      persona.name.trim().length > 0 &&
+      persona.age > 0 &&
+      persona.years > 0 &&
+      persona.jobTitle.length > 0 &&
+      persona.personaType.length > 0 &&
+      persona.gender.length > 0
+    );
+  };
+
+  // Generate avatar with Gemini API
+  const generateAvatar = async () => {
+    if (!isBasicInfoComplete() || avatarLoading) return;
+
+    setAvatarLoading(true);
+    setAvatarError(null);
+
+    try {
+      const res = await fetch("/api/avatar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: persona.name,
+          age: persona.age,
+          gender: persona.gender,
+          jobTitle: persona.jobTitle,
+          personaType: persona.personaType,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      setAvatarUrl(data.imageUrl);
+    } catch (error) {
+      console.error("Avatar generation failed:", error);
+      setAvatarError("이미지 생성에 실패했습니다. 다시 시도해주세요.");
+    } finally {
+      setAvatarLoading(false);
+    }
+  };
 
   return (
     <div className="persona-page">
@@ -81,8 +135,49 @@ export default function PersonaScreen() {
         <div className="persona-preview">
           <div className="persona-card">
             <div className="persona-avatar">
-              <span>{shortName}</span>
+              {avatarLoading ? (
+                <div className="avatar-spinner" />
+              ) : avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={`${persona.name} avatar`}
+                  className="avatar-image"
+                />
+              ) : (
+                <span>{shortName}</span>
+              )}
             </div>
+
+            {/* Avatar actions */}
+            <div className="avatar-actions">
+              {!avatarUrl && !avatarLoading && (
+                <button
+                  className="btn-generate-avatar"
+                  onClick={generateAvatar}
+                  disabled={!isBasicInfoComplete()}
+                  title={
+                    !isBasicInfoComplete()
+                      ? "기본 정보를 모두 입력해주세요"
+                      : "AI 캐릭터 사진을 생성합니다"
+                  }
+                >
+                  &#x1F4F7; AI 사진 생성
+                </button>
+              )}
+              {avatarUrl && !avatarLoading && (
+                <button
+                  className="btn-regenerate-avatar"
+                  onClick={generateAvatar}
+                >
+                  &#x21bb; 다시 생성
+                </button>
+              )}
+              {avatarLoading && (
+                <span className="avatar-loading-text">생성 중...</span>
+              )}
+              {avatarError && <p className="avatar-error">{avatarError}</p>}
+            </div>
+
             <h3 className="persona-name">{persona.name}</h3>
             <p className="persona-role">{persona.jobTitle}</p>
             <div className="persona-tags">
@@ -138,7 +233,7 @@ export default function PersonaScreen() {
           </div>
 
           <div className="persona-form">
-            {/* Row 1 */}
+            {/* Row 1: 이름, 나이, 경력 연차 */}
             <div className="form-row">
               <div className="form-group">
                 <label>이름</label>
@@ -149,6 +244,21 @@ export default function PersonaScreen() {
                     setPersona({ ...persona, name: e.target.value })
                   }
                 />
+              </div>
+              <div className="form-group">
+                <label>나이</label>
+                <div className="input-suffix">
+                  <input
+                    type="number"
+                    min={20}
+                    max={65}
+                    value={persona.age}
+                    onChange={(e) =>
+                      setPersona({ ...persona, age: Number(e.target.value) })
+                    }
+                  />
+                  <span>세</span>
+                </div>
               </div>
               <div className="form-group">
                 <label>경력 연차</label>
