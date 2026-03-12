@@ -2,6 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface Props {
   scenarioId: string;
   scenarioLabel: string;
@@ -102,10 +107,41 @@ const personalityTypes: Record<string, { mbti: string; disc: string; strengths: 
   },
 };
 
+/* 시나리오별 시스템 프롬프트 */
+function buildSystemPrompt(scenarioId: string): string {
+  const member = teamMembers[scenarioId] || teamMembers.goal;
+  const charInfo = characterInfoMap[scenarioId] || characterInfoMap.goal;
+
+  return `당신은 "${member.name}"이라는 팀원 역할을 연기합니다. 이것은 코칭대화 롤플레이 훈련입니다.
+사용자는 당신의 팀 리더(관리자)입니다. 1on1 면담 상황에서 자연스럽게 대화하세요.
+
+[캐릭터 정보]
+- 이름: ${member.name}
+- 유형: ${member.type} (난이도: ${member.difficulty})
+- 성격: ${charInfo.personality}
+- 업무 스타일: ${charInfo.workStyle}
+- 배경: ${charInfo.background}
+- 동기부여 요인: ${charInfo.motivation}
+
+[규칙]
+- 항상 ${member.name}으로서 1인칭으로 대화하세요.
+- 캐릭터의 성격과 상황에 맞게 자연스럽게 반응하세요.
+- 답변은 실제 면담처럼 간결하게 (2~4문장) 하세요.
+- 한국어로 대화하세요.`;
+}
+
 export default function RolePlayScreen({ scenarioId, scenarioLabel, onExit }: Props) {
   const [rightTab, setRightTab] = useState<"guide" | "character" | "personality">("guide");
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -116,12 +152,49 @@ export default function RolePlayScreen({ scenarioId, scenarioLabel, onExit }: Pr
           videoRef.current.srcObject = s;
         }
       })
-      .catch(() => { /* 카메라 권한 거부 시 무시 */ });
+      .catch(() => {});
 
     return () => {
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, []);
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+
+    const userMessage: Message = { role: "user", content: text };
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages,
+          systemPrompt: buildSystemPrompt(scenarioId),
+          conversationId,
+          scenarioId,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.conversationId && !conversationId) {
+        setConversationId(data.conversationId);
+      }
+      setMessages([...newMessages, { role: "assistant", content: data.message }]);
+    } catch {
+      setMessages([
+        ...newMessages,
+        { role: "assistant", content: "오류가 발생했습니다. 다시 시도해주세요." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const member = teamMembers[scenarioId] || teamMembers.goal;
   const charInfo = characterInfoMap[scenarioId] || characterInfoMap.goal;
@@ -180,43 +253,46 @@ export default function RolePlayScreen({ scenarioId, scenarioLabel, onExit }: Pr
             </div>
           </div>
 
-          {/* 안내 텍스트 */}
-          <p className="roleplay-guide-text">대화 화면과 채팅이 여기에 표시됩니다.</p>
-
-          {/* 안내 박스 */}
-          <div className="roleplay-info-box">
-            <ul>
-              <li>AI 팀원과의 대화를 시작하려면 아래 [재생] 버튼을 눌러주세요.</li>
-              <li>대화 중에는 마이크 설정을 바꿀 수 없습니다. 이어폰 혹은 헤드셋을 사용하는 경우, 마이크 설정을 변경하고 대화를 시작해주세요.</li>
-              <li>원활한 AI 실습을 위해 아래의 환경을 조성해주세요.
-                <div className="roleplay-info-sub">(1) 조용한 공간에서 실습하세요.</div>
-                <div className="roleplay-info-sub">(2) 마이크 가까이에서 큰 목소리로 이야기하세요.</div>
-              </li>
-            </ul>
-          </div>
-
-          {/* 하단 컨트롤 바 */}
-          <div className="roleplay-controls">
-            <span className="roleplay-timer">735:27</span>
-            <button className="roleplay-audio-btn">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <rect x="2" y="1" width="3" height="18" rx="1" fill="#666" />
-                <rect x="7" y="4" width="3" height="12" rx="1" fill="#666" />
-                <rect x="12" y="2" width="3" height="16" rx="1" fill="#666" />
-                <rect x="17" y="6" width="3" height="8" rx="1" fill="#666" />
-              </svg>
-            </button>
-            <button
-              className={`roleplay-play-btn ${isPlaying ? "playing" : ""}`}
-              onClick={() => setIsPlaying(!isPlaying)}
-            >
-              {isPlaying ? "⏸ 대화 중지" : "▶ 대화 시작하기"}
-            </button>
-            <div className="roleplay-mic-select">
-              <span>🎙</span>
-              <select>
-                <option>마이크 배열(디...</option>
-              </select>
+          {/* 채팅 영역 */}
+          <div className="roleplay-chat-area">
+            <div className="roleplay-chat-messages">
+              {messages.length === 0 && (
+                <div className="roleplay-chat-empty">
+                  {member.name}에게 먼저 말을 걸어보세요.
+                </div>
+              )}
+              {messages.map((msg, i) => (
+                <div key={i} className={`roleplay-chat-row ${msg.role}`}>
+                  {msg.role === "assistant" && (
+                    <div className="roleplay-chat-avatar">{member.name.charAt(0)}</div>
+                  )}
+                  <div className={`roleplay-chat-bubble ${msg.role}`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="roleplay-chat-row assistant">
+                  <div className="roleplay-chat-avatar">{member.name.charAt(0)}</div>
+                  <div className="roleplay-chat-bubble assistant typing">
+                    <span className="dot"></span><span className="dot"></span><span className="dot"></span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+            <div className="roleplay-chat-input">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder="메시지를 입력하세요..."
+                disabled={loading}
+              />
+              <button onClick={sendMessage} disabled={loading || !input.trim()}>
+                전송
+              </button>
             </div>
           </div>
         </div>
